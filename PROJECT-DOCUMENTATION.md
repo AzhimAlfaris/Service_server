@@ -31,10 +31,11 @@ RabbitMQ dipakai untuk komunikasi antarservice.
   - Mengirim request data latest/history ke `microcontroller-service` melalui RabbitMQ
   - Menerima event notifikasi dari RabbitMQ
   - Mengirim email ke alamat user yang ada di data sensor
+  - Tidak menggunakan database sendiri
 
 ### 2.2 Komponen Infrastruktur
 
-- MySQL untuk database masing-masing service
+- MySQL untuk `microcontroller-service`
 - RabbitMQ sebagai message broker
 - Gmail SMTP untuk pengiriman email otomatis
 
@@ -71,13 +72,12 @@ Perbedaan penting:
 - Java 17
 - Spring Boot 4.1.0
 - Spring Web
-- Spring Data JPA
 - Spring AMQP
 - Spring Mail
 - Lombok
-- MySQL Connector
 - Jackson Databind
-- H2 untuk test
+- MySQL Connector untuk `microcontroller-service`
+- H2 untuk test `microcontroller-service`
 
 ## 5. Struktur Project
 
@@ -157,13 +157,15 @@ CREATE TABLE sensor_readings (
 );
 ```
 
-### 6.2 Database `application_service_db`
+### 6.2 Database `application-service`
 
-Saat ini `application-service` tidak lagi menyimpan user table.
+`application-service` sekarang tidak memerlukan database.
 
-Jadi database ini secara praktis dipakai untuk struktur Hibernate dan kebutuhan internal service, tetapi fitur utama project berada di `microcontroller_service_db`.
+Artinya:
 
-Jika Anda ingin, database ini bisa tetap dibiarkan kosong, atau Anda bisa biarkan Hibernate membuat tabel pendukung jika nanti ada kebutuhan tambahan.
+- tidak ada tabel yang harus dibuat
+- tidak ada konfigurasi datasource di service ini
+- service ini cukup memakai RabbitMQ dan SMTP
 
 ## 7. RabbitMQ Design
 
@@ -282,9 +284,8 @@ Jika Anda masih memakai XAMPP default:
 - Buka phpMyAdmin
 - Buat database:
   - `microcontroller_service_db`
-  - `application_service_db`
 
-Karena `spring.jpa.hibernate.ddl-auto=update`, tabel akan dibuat otomatis saat service dijalankan.
+Karena `spring.jpa.hibernate.ddl-auto=update`, tabel `sensor_readings` akan dibuat otomatis saat service dijalankan.
 
 ### 9.2 RabbitMQ
 
@@ -324,11 +325,6 @@ Saya sudah ubah konfigurasi project supaya bisa dibaca dari environment variable
 
 #### `application-service`
 
-- `DB_HOST`
-- `DB_PORT`
-- `DB_NAME_APPLICATION`
-- `DB_USERNAME`
-- `DB_PASSWORD`
 - `RABBITMQ_HOST`
 - `RABBITMQ_PORT`
 - `RABBITMQ_USERNAME`
@@ -363,7 +359,7 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: application_service_db
+      MYSQL_DATABASE: microcontroller_service_db
     ports:
       - "3306:3306"
     volumes:
@@ -407,15 +403,9 @@ services:
     container_name: application-service
     restart: unless-stopped
     depends_on:
-      - mysql
       - rabbitmq
       - microcontroller-service
     environment:
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_NAME_APPLICATION: application_service_db
-      DB_USERNAME: root
-      DB_PASSWORD: root
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USERNAME: user
@@ -449,14 +439,19 @@ Jadi di Docker, host harus memakai nama service:
 Kalau Anda memakai MySQL di Docker:
 
 - Nama database otomatis dibuat dari `MYSQL_DATABASE`
-- Jika ingin dua database, Anda bisa:
-  - buat satu container MySQL lalu jalankan SQL init untuk membuat dua database
-  - atau pakai satu database saja dan atur ulang nama DB sesuai kebutuhan
+- Dalam skenario project ini, cukup buat `microcontroller_service_db`
+- Kalau nanti ingin menambah database lain, Anda bisa gunakan SQL init
 
 Contoh SQL init:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS application_service_db;
+CREATE DATABASE IF NOT EXISTS microcontroller_service_db;
+```
+
+Untuk project saat ini, cukup gunakan:
+
+```sql
 CREATE DATABASE IF NOT EXISTS microcontroller_service_db;
 ```
 
@@ -563,4 +558,3 @@ Kedua service sudah pernah diuji dengan Maven test dan build-nya lolos saat konf
 Kalimat ringkas yang bisa Anda pakai:
 
 > Project ini terdiri dari `microcontroller-service` untuk menerima dan menyimpan data sensor ESP32, serta `application-service` untuk mengambil data sensor lewat RabbitMQ dan mengirim email otomatis saat data baru masuk. Database utama adalah MySQL, RabbitMQ dipakai untuk request/response dan notifikasi, dan saat masuk ke Docker semua host `localhost` harus diganti environment variable atau nama service container seperti `mysql` dan `rabbitmq`.
-
