@@ -159,7 +159,7 @@ CREATE TABLE sensor_readings (
 
 ### 6.2 Database `application-service`
 
-`application-service` sekarang tidak memerlukan database.
+`application-service` tidak memerlukan database.
 
 Artinya:
 
@@ -351,6 +351,8 @@ Saya sudah ubah konfigurasi project supaya bisa dibaca dari environment variable
 
 Contoh berikut bisa Anda jadikan acuan:
 
+Kalau Anda sebelumnya sudah menjalankan container MySQL manual dengan nama `verdant-mysql`, hentikan atau hapus dulu container lama itu sebelum menjalankan Compose ini agar tidak bentrok nama container dan port `3306`.
+
 ```yaml
 services:
   mysql:
@@ -382,8 +384,10 @@ services:
     container_name: microcontroller-service
     restart: unless-stopped
     depends_on:
-      - mysql
-      - rabbitmq
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       DB_HOST: mysql
       DB_PORT: 3306
@@ -403,8 +407,10 @@ services:
     container_name: application-service
     restart: unless-stopped
     depends_on:
-      - rabbitmq
-      - microcontroller-service
+      rabbitmq:
+        condition: service_healthy
+      microcontroller-service:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
@@ -413,7 +419,7 @@ services:
       MAIL_HOST: smtp.gmail.com
       MAIL_PORT: 587
       MAIL_USERNAME: anasrudi048@gmail.com
-      MAIL_PASSWORD: isi_app_password_di_sini
+      MAIL_PASSWORD: ISI_PASSWORD_APP_DI_SINI
       MAIL_FROM: anasrudi048@gmail.com
     ports:
       - "8082:8082"
@@ -445,13 +451,6 @@ Kalau Anda memakai MySQL di Docker:
 Contoh SQL init:
 
 ```sql
-CREATE DATABASE IF NOT EXISTS application_service_db;
-CREATE DATABASE IF NOT EXISTS microcontroller_service_db;
-```
-
-Untuk project saat ini, cukup gunakan:
-
-```sql
 CREATE DATABASE IF NOT EXISTS microcontroller_service_db;
 ```
 
@@ -462,18 +461,36 @@ Kalau pakai init script, script itu biasanya diletakkan di folder init container
 ### 11.1 `application-service/Dockerfile`
 
 ```dockerfile
-FROM eclipse-temurin:17-jdk
+FROM maven:3.9.11-eclipse-temurin-17 AS build
+WORKDIR /build
+
+COPY pom.xml .
+COPY src ./src
+RUN mvn -q -DskipTests package
+
+FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY target/application-service-0.0.1-SNAPSHOT.jar app.jar
+
+COPY --from=build /build/target/application-service-0.0.1-SNAPSHOT.jar app.jar
+
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 ```
 
 ### 11.2 `microcontroller-service/Dockerfile`
 
 ```dockerfile
-FROM eclipse-temurin:17-jdk
+FROM maven:3.9.11-eclipse-temurin-17 AS build
+WORKDIR /build
+
+COPY pom.xml .
+COPY src ./src
+RUN mvn -q -DskipTests package
+
+FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY target/microcontroller-service-0.0.1-SNAPSHOT.jar app.jar
+
+COPY --from=build /build/target/microcontroller-service-0.0.1-SNAPSHOT.jar app.jar
+
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 ```
 
@@ -557,4 +574,4 @@ Kedua service sudah pernah diuji dengan Maven test dan build-nya lolos saat konf
 
 Kalimat ringkas yang bisa Anda pakai:
 
-> Project ini terdiri dari `microcontroller-service` untuk menerima dan menyimpan data sensor ESP32, serta `application-service` untuk mengambil data sensor lewat RabbitMQ dan mengirim email otomatis saat data baru masuk. Database utama adalah MySQL, RabbitMQ dipakai untuk request/response dan notifikasi, dan saat masuk ke Docker semua host `localhost` harus diganti environment variable atau nama service container seperti `mysql` dan `rabbitmq`.
+> Project ini terdiri dari `microcontroller-service` untuk menerima dan menyimpan data sensor ESP32, serta `application-service` untuk mengambil data sensor lewat RabbitMQ dan mengirim email otomatis saat data baru masuk. Database hanya dipakai oleh `microcontroller-service`, RabbitMQ dipakai untuk request/response dan notifikasi, dan saat masuk ke Docker semua host `localhost` harus diganti environment variable atau nama service container seperti `mysql` dan `rabbitmq`.
