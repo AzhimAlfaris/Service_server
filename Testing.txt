@@ -18,7 +18,13 @@ URL: http://localhost:8081/api/sensor-readings/latest/ESP32-001
 
 application-service:
 Get:
-URL: http://localhost:8082/api/sensor-data/history/ESP32-001?limit=10
-     http://localhost:8082/api/sensor-data/latest/ESP32-001
+URL: http://localhost:8082/api/sensor-data/latest/ESP32-001
+     http://localhost:8082/api/sensor-data/history/ESP32-001?limit=10
 
-     
+monitoring:
+URL: http://localhost:8081/actuator/health
+URL: http://localhost:8082/actuator/health
+URL: http://localhost:8081/actuator/prometheus
+URL: http://localhost:8082/actuator/prometheus
+URL: http://localhost:9090
+URL: http://localhost:3000

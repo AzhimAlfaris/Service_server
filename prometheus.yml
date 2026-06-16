@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 1m
+
+scrape_configs:
+  - job_name: 'microcontroller-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['microcontroller-service:8081']
+
+  - job_name: 'application-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['application-service:8082']
