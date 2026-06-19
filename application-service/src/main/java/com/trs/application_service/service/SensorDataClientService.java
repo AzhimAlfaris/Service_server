@@ -5,11 +5,13 @@ import com.trs.application_service.dto.SensorQueryRequest;
 import com.trs.application_service.dto.SensorQueryResponse;
 import com.trs.application_service.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class SensorDataClientService {
 
@@ -30,6 +32,7 @@ public class SensorDataClientService {
 
     private SensorQueryResponse requestSensorData(String microcontrollerId, String requestType, int limit) {
         try {
+            log.info("Sending sensor query request type={} microcontrollerId={} limit={}", requestType, microcontrollerId, limit);
             String requestJson = objectMapper.writeValueAsString(new SensorQueryRequest(microcontrollerId, requestType, limit));
             Object rawResponse = rabbitTemplate.convertSendAndReceive(exchangeName, routingKey, requestJson);
 
@@ -41,8 +44,10 @@ public class SensorDataClientService {
             if (!"success".equalsIgnoreCase(response.status())) {
                 throw new ResourceNotFoundException(response.message());
             }
+            log.info("Received sensor query response type={} microcontrollerId={} status={}", requestType, microcontrollerId, response.status());
             return response;
         } catch (Exception exception) {
+            log.error("Failed to request sensor data type={} microcontrollerId={} limit={}", requestType, microcontrollerId, limit, exception);
             throw new RuntimeException("Gagal mengambil data sensor: " + exception.getMessage(), exception);
         }
     }

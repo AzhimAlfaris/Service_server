@@ -35,6 +35,13 @@ public class SensorReadingService {
             throw new IllegalArgumentException("Email tidak boleh kosong");
         }
 
+        log.info("Saving sensor reading microcontrollerId={} sensorValue={} moisturePercent={} soilCondition={} action={}",
+                request.microcontrollerId(),
+                request.sensorValue(),
+                request.moisturePercent(),
+                request.soilCondition(),
+                request.action());
+
         SensorReading sensorReading = SensorReading.create(
                 request.microcontrollerId(),
                 request.sensorValue(),
@@ -47,10 +54,12 @@ public class SensorReadingService {
         SensorReading savedReading = sensorReadingRepository.save(sensorReading);
         SensorReadingResponse response = toResponse(savedReading);
         publishNotification(response);
+        log.info("Sensor reading saved with id={} microcontrollerId={}", response.id(), response.microcontrollerId());
         return response;
     }
 
     public SensorReadingResponse getLatestByMicrocontrollerId(String microcontrollerId) {
+        log.info("Fetching latest sensor reading for microcontrollerId={}", microcontrollerId);
         return sensorReadingRepository.findTopByMicrocontrollerIdOrderByCreatedAtDesc(microcontrollerId)
                 .map(this::toResponse)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -58,6 +67,7 @@ public class SensorReadingService {
     }
 
     public List<SensorReadingResponse> getHistoryByMicrocontrollerId(String microcontrollerId, int limit) {
+        log.info("Fetching sensor reading history for microcontrollerId={} limit={}", microcontrollerId, limit);
         List<SensorReading> sensorReadings = sensorReadingRepository.findByMicrocontrollerIdOrderByCreatedAtDesc(microcontrollerId);
         if (limit > 0 && limit < sensorReadings.size()) {
             sensorReadings = sensorReadings.subList(0, limit);
@@ -89,6 +99,7 @@ public class SensorReadingService {
         try {
             String payload = objectMapper.writeValueAsString(response);
             rabbitTemplate.convertAndSend(exchangeName, notificationRoutingKey, payload);
+            log.info("Published sensor notification for readingId={}", response.id());
         } catch (Exception exception) {
             log.error("Gagal menyiapkan notifikasi email", exception);
         }

@@ -49,6 +49,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      logstash:
+        condition: service_started
     environment:
       DB_HOST: verdant-mysql
       DB_PORT: 3306
@@ -59,6 +61,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USERNAME: user
       RABBITMQ_PASSWORD: password
+      LOGSTASH_HOST: verdant-logstash
     ports:
       - "8081:8081"
     networks:
@@ -74,6 +77,8 @@ services:
         condition: service_healthy
       microcontroller-service:
         condition: service_started
+      logstash:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
@@ -82,8 +87,9 @@ services:
       MAIL_HOST: smtp.gmail.com
       MAIL_PORT: 587
       MAIL_USERNAME: anasrudi048@gmail.com
-      MAIL_PASSWORD: ISI_PASSWORD_APP_DI_SINI
+      MAIL_PASSWORD: zcqd rasi elnk jcjx
       MAIL_FROM: anasrudi048@gmail.com
+      LOGSTASH_HOST: verdant-logstash
     ports:
       - "8082:8082"
     networks:
@@ -111,10 +117,46 @@ services:
     depends_on:
       - prometheus
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+    container_name: verdant-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+    networks:
+      - verdant-network
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:7.17.10
+    container_name: verdant-logstash
+    volumes:
+      - ./elk-stack/logstash/pipeline:/usr/share/logstash/pipeline
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+    networks:
+      - verdant-network
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.10
+    container_name: verdant-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://verdant-elasticsearch:9200
+    networks:
+      - verdant-network
+    depends_on:
+      - elasticsearch
+
 volumes:
   mysql_data:
   grafana-storage:
-
+  
 networks:
   verdant-network:
     driver: bridge

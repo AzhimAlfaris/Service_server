@@ -1,17 +1,18 @@
 # Verdant Flow Service Server Documentation
 
-Dokumen ini menjelaskan kondisi project terbaru untuk backend monitoring sensor ESP32 berbasis Spring Boot.
+Dokumen ini menjelaskan kondisi terbaru project backend monitoring sensor berbasis Spring Boot, MySQL, RabbitMQ, dan ELK stack.
 
-Project terdiri dari dua service utama:
+Project ini terdiri dari dua service utama:
 
 - `microcontroller-service`
 - `application-service`
 
-Selain itu, repo ini juga sudah memiliki:
+Selain itu, repository ini juga memuat:
 
 - `docker-compose.yml` untuk menjalankan seluruh stack
 - `init/microcontroller_service_db.sql` untuk inisialisasi database
 - `prometheus.yml` untuk scraping metrics
+- `elk-stack/` untuk konfigurasi Elasticsearch, Logstash, dan Kibana
 
 ## 1. Ringkasan Cepat
 
@@ -39,7 +40,7 @@ cd application-service
 .\mvnw.cmd spring-boot:run
 ```
 
-### Jalankan stack Docker
+### Jalankan seluruh stack Docker
 
 ```powershell
 docker compose up -d --build
@@ -62,7 +63,8 @@ Alur utamanya:
 2. `microcontroller-service` menyimpan data ke MySQL.
 3. Setelah data tersimpan, service ini mem-publish event notifikasi ke RabbitMQ.
 4. `application-service` menerima event tersebut dan mengirim email ke alamat user pada data sensor.
-5. Saat aplikasi meminta data terbaru atau riwayat sensor, `application-service` mengirim request ke RabbitMQ dan meneruskan hasilnya ke aplikasi.
+5. Saat aplikasi meminta data terbaru atau riwayat sensor, `application-service` mengirim request ke RabbitMQ dan meneruskan hasilnya ke caller.
+6. Seluruh log aplikasi dikirim ke Logstash, diteruskan ke Elasticsearch, dan ditampilkan di Kibana.
 
 ## 3. Arsitektur
 
@@ -74,6 +76,7 @@ Tanggung jawab:
 - menyimpan data ke MySQL
 - menyediakan endpoint `latest` dan `history` untuk debug langsung
 - mengirim event notifikasi ke RabbitMQ setelah insert berhasil
+- mengirim log aplikasi ke Logstash
 
 ### 3.2 `application-service`
 
@@ -84,13 +87,15 @@ Tanggung jawab:
 - menerima event notifikasi dari RabbitMQ
 - mengirim email otomatis ke user
 - tidak memakai database sendiri
+- mengirim log aplikasi ke Logstash
 
 ### 3.3 Komponen Infrastruktur
 
 - MySQL untuk `microcontroller-service`
 - RabbitMQ sebagai message broker
 - Gmail SMTP untuk email notifikasi
-- Prometheus dan Grafana untuk observability
+- Elasticsearch, Logstash, dan Kibana untuk observability log
+- Prometheus dan Grafana untuk metrics monitoring
 
 ## 4. Teknologi
 
@@ -111,6 +116,7 @@ Kedua service sudah mengaktifkan:
 
 - `spring-boot-starter-actuator`
 - `micrometer-registry-prometheus`
+- logging ke Logstash melalui `logback-spring.xml`
 
 Endpoint yang diekspos:
 
@@ -118,9 +124,36 @@ Endpoint yang diekspos:
 - `/actuator/info`
 - `/actuator/prometheus`
 
-## 5. Struktur Project
+## 5. Logging dan ELK
 
-### 5.1 `application-service`
+### 5.1 Alur log
+
+Log dari kedua service dikirim ke Logstash lewat TCP appender:
+
+- `microcontroller-service` -> Logstash port `5000`
+- `application-service` -> Logstash port `5001`
+
+Logstash kemudian meneruskan data ke Elasticsearch, dan Kibana membaca index dari Elasticsearch.
+
+### 5.2 File konfigurasi
+
+- `application-service/src/main/resources/logback-spring.xml`
+- `microcontroller-service/src/main/resources/logback-spring.xml`
+- `elk-stack/logstash/pipeline/logstash.conf`
+
+### 5.3 Perilaku log saat ini
+
+Project saat ini sudah mencatat:
+
+- request HTTP masuk
+- request ke service layer
+- response sukses
+- error dan exception
+- event startup dan shutdown container
+
+## 6. Struktur Project
+
+### 6.1 `application-service`
 
 - `controller`
   - `SensorDataController`
@@ -130,6 +163,7 @@ Endpoint yang diekspos:
   - `SensorEmailService`
 - `config`
   - `RabbitMQConfig`
+  - `HttpRequestLoggingFilter`
 - `dto`
   - `SensorQueryRequest`
   - `SensorQueryResponse`
@@ -138,7 +172,7 @@ Endpoint yang diekspos:
   - `GlobalExceptionHandler`
   - `ResourceNotFoundException`
 
-### 5.2 `microcontroller-service`
+### 6.2 `microcontroller-service`
 
 - `controller`
   - `SensorReadingController`
@@ -147,6 +181,7 @@ Endpoint yang diekspos:
   - `SensorRequestListener`
 - `config`
   - `RabbitMQConfig`
+  - `HttpRequestLoggingFilter`
 - `repository`
   - `SensorReadingRepository`
 - `model`
@@ -160,17 +195,19 @@ Endpoint yang diekspos:
   - `GlobalExceptionHandler`
   - `ResourceNotFoundException`
 
-## 6. Konfigurasi Runtime
+## 7. Konfigurasi Runtime
 
-### 6.1 Port default
+### 7.1 Port default
 
 - `microcontroller-service` -> `8081`
 - `application-service` -> `8082`
 
-### 6.2 `application-service/src/main/resources/application.properties`
+### 7.2 `application-service/src/main/resources/application.properties`
 
-Nilai penting yang saat ini dipakai:
+Nilai penting yang dipakai:
 
+- `spring.application.name=application-service`
+- `server.port=8082`
 - `spring.rabbitmq.host=${RABBITMQ_HOST:localhost}`
 - `spring.rabbitmq.port=${RABBITMQ_PORT:5672}`
 - `spring.rabbitmq.username=${RABBITMQ_USERNAME:user}`
@@ -185,20 +222,27 @@ Nilai penting yang saat ini dipakai:
 - `spring.mail.port=${MAIL_PORT:587}`
 - `spring.mail.username=${MAIL_USERNAME:anasrudi048@gmail.com}`
 - `spring.mail.password=${MAIL_PASSWORD:...}`
+- `management.endpoints.web.exposure.include=health,info,prometheus`
+- `management.metrics.tags.application=${spring.application.name}`
 
 Catatan:
 
-- `SensorEmailListener` aktif hanya jika properti `spring.mail.host` tersedia.
-- Jika `MAIL_PASSWORD` tidak diisi dengan App Password Gmail, email tidak akan terkirim.
+- `SensorEmailListener` aktif jika `spring.mail.host` tersedia.
+- Jika `MAIL_PASSWORD` tidak diisi dengan Gmail App Password, email tidak akan terkirim.
 
-### 6.3 `microcontroller-service/src/main/resources/application.properties`
+### 7.3 `microcontroller-service/src/main/resources/application.properties`
 
-Nilai penting yang saat ini dipakai:
+Nilai penting yang dipakai:
 
+- `spring.application.name=microcontroller-service`
+- `server.port=8081`
 - `spring.datasource.url=jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME_MICRO:microcontroller_service_db}`
 - `spring.datasource.username=${DB_USERNAME:root}`
 - `spring.datasource.password=${DB_PASSWORD:root}`
+- `spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver`
 - `spring.jpa.hibernate.ddl-auto=update`
+- `spring.jpa.show-sql=true`
+- `spring.jpa.properties.hibernate.format_sql=true`
 - `spring.rabbitmq.host=${RABBITMQ_HOST:localhost}`
 - `spring.rabbitmq.port=${RABBITMQ_PORT:5672}`
 - `spring.rabbitmq.username=${RABBITMQ_USERNAME:user}`
@@ -207,10 +251,12 @@ Nilai penting yang saat ini dipakai:
 - `app.rabbitmq.queue=sensor.request.queue`
 - `app.rabbitmq.routing-key=sensor.request`
 - `app.rabbitmq.notification-routing-key=sensor.notification`
+- `management.endpoints.web.exposure.include=health,info,prometheus`
+- `management.metrics.tags.application=${spring.application.name}`
 
-## 7. Alur Data
+## 8. Alur Data
 
-### 7.1 Request data dari aplikasi
+### 8.1 Request data dari aplikasi
 
 1. Aplikasi memanggil endpoint `application-service`.
 2. `SensorDataClientService` mengubah request menjadi JSON `SensorQueryRequest`.
@@ -220,7 +266,7 @@ Nilai penting yang saat ini dipakai:
 6. Response dikembalikan sebagai `SensorQueryResponse`.
 7. `application-service` meneruskan response ke caller.
 
-### 7.2 Notifikasi email
+### 8.2 Notifikasi email
 
 1. ESP32 mengirim data ke `microcontroller-service`.
 2. `SensorReadingService` menyimpan data ke MySQL.
@@ -228,23 +274,23 @@ Nilai penting yang saat ini dipakai:
 4. `SensorEmailListener` di `application-service` menerima payload dari queue `sensor.notification.queue`.
 5. `SensorEmailService` mengirim email ke alamat yang ada di data sensor.
 
-## 8. RabbitMQ Design
+## 9. RabbitMQ Design
 
-### 8.1 Exchange
+### 9.1 Exchange
 
 - `sensor.exchange`
 
-### 8.2 Queue
+### 9.2 Queue
 
 - `sensor.request.queue`
 - `sensor.notification.queue`
 
-### 8.3 Routing key
+### 9.3 Routing key
 
 - `sensor.request`
 - `sensor.notification`
 
-### 8.4 Perilaku penting
+### 9.4 Perilaku penting
 
 - Exchange yang dipakai adalah `DirectExchange`.
 - Request history memakai `requestType=HISTORY` dan `limit`.
@@ -252,9 +298,9 @@ Nilai penting yang saat ini dipakai:
 - Jika request type tidak ada, listener di `microcontroller-service` default ke `LATEST`.
 - Jika response RabbitMQ kosong, `application-service` melempar `ResourceNotFoundException`.
 
-## 9. Database
+## 10. Database
 
-### 9.1 Database `microcontroller_service_db`
+### 10.1 Database `microcontroller_service_db`
 
 Database hanya dipakai oleh `microcontroller-service`.
 
@@ -275,7 +321,7 @@ Kolom inti:
 - `timestamp_sensor`
 - `created_at`
 
-### 9.2 Skema SQL inti
+### 10.2 Skema SQL inti
 
 ```sql
 CREATE TABLE sensor_readings (
@@ -292,15 +338,15 @@ CREATE TABLE sensor_readings (
 );
 ```
 
-File `init/microcontroller_service_db.sql` sudah disiapkan untuk inisialisasi tabel tersebut saat container MySQL dibuat.
+File `init/microcontroller_service_db.sql` digunakan untuk inisialisasi tabel saat container MySQL pertama kali dibuat.
 
-### 9.3 `application-service`
+### 10.3 `application-service`
 
 Service ini tidak memakai database.
 
-## 10. Endpoint API
+## 11. Endpoint API
 
-## 10.1 `microcontroller-service`
+## 11.1 `microcontroller-service`
 
 Base URL:
 
@@ -310,7 +356,7 @@ http://localhost:8081
 
 ### POST `/api/sensor-readings`
 
-Simpan data sensor baru.
+Menyimpan data sensor baru.
 
 Contoh request:
 
@@ -350,7 +396,7 @@ Response:
 - HTTP `200 OK`
 - body `List<SensorReadingResponse>`
 
-## 10.2 `application-service`
+## 11.2 `application-service`
 
 Base URL:
 
@@ -394,7 +440,7 @@ Catatan:
 - `history` mengembalikan daftar data hingga batas `limit`.
 - Jika data tidak ditemukan, service mengembalikan error dengan status not found.
 
-## 11. Docker Compose Terbaru
+## 12. Docker Compose Terbaru
 
 `docker-compose.yml` saat ini menjalankan service berikut:
 
@@ -404,8 +450,11 @@ Catatan:
 - `application-service`
 - `prometheus`
 - `grafana`
+- `elasticsearch`
+- `logstash`
+- `kibana`
 
-### 11.1 Port di Docker
+### 12.1 Port di Docker
 
 - MySQL -> `3306`
 - RabbitMQ AMQP -> `5672`
@@ -414,14 +463,17 @@ Catatan:
 - `application-service` -> `8082`
 - Prometheus -> `9090`
 - Grafana -> `3000`
+- Elasticsearch -> `9200`
+- Logstash TCP -> `5000` dan `5001`
+- Kibana -> `5601`
 
-### 11.2 Network
+### 12.2 Network
 
 Semua container menggunakan network:
 
 - `verdant-network`
 
-### 11.3 Environment variable di Docker
+### 12.3 Environment variable di Docker
 
 #### `microcontroller-service`
 
@@ -434,6 +486,7 @@ Semua container menggunakan network:
 - `RABBITMQ_PORT=5672`
 - `RABBITMQ_USERNAME=user`
 - `RABBITMQ_PASSWORD=password`
+- `LOGSTASH_HOST=verdant-logstash`
 
 #### `application-service`
 
@@ -446,23 +499,24 @@ Semua container menggunakan network:
 - `MAIL_USERNAME=anasrudi048@gmail.com`
 - `MAIL_PASSWORD=App Password Gmail`
 - `MAIL_FROM=anasrudi048@gmail.com`
+- `LOGSTASH_HOST=verdant-logstash`
 
-### 11.4 Catatan penting Docker
+### 12.4 Catatan penting Docker
 
 - Di dalam container, `localhost` tidak dipakai untuk koneksi antarservice.
-- Gunakan nama service container seperti `verdant-mysql` dan `rabbitmq`.
+- Gunakan nama service container seperti `verdant-mysql`, `rabbitmq`, dan `verdant-logstash`.
 - `docker-compose.yml` juga memasang healthcheck untuk MySQL dan RabbitMQ.
 
-## 12. Monitoring
+## 13. Monitoring
 
-### 12.1 Prometheus
+### 13.1 Prometheus
 
 `prometheus.yml` saat ini scraping:
 
 - `microcontroller-service:8081/actuator/prometheus`
 - `application-service:8082/actuator/prometheus`
 
-### 12.2 Grafana
+### 13.2 Grafana
 
 Grafana tersedia di:
 
@@ -470,7 +524,17 @@ Grafana tersedia di:
 http://localhost:3000
 ```
 
-### 12.3 Actuator
+### 13.3 Kibana
+
+Kibana tersedia di:
+
+```text
+http://localhost:5601
+```
+
+Log aplikasi yang dikirim oleh kedua service akan muncul di Kibana setelah masuk ke Elasticsearch melalui Logstash.
+
+### 13.4 Actuator
 
 Kedua service mengekspos metrics ke:
 
@@ -481,7 +545,7 @@ Kedua service mengekspos metrics ke:
 - `http://localhost:8082/actuator/info`
 - `http://localhost:8082/actuator/prometheus`
 
-## 13. Catatan Testing
+## 14. Catatan Testing
 
 Jika ingin validasi cepat setelah menjalankan service:
 
@@ -490,7 +554,10 @@ Jika ingin validasi cepat setelah menjalankan service:
 3. GET `latest` dan `history` dari `application-service`.
 4. Cek `actuator/health`.
 5. Cek `actuator/prometheus`.
+6. Cek log di Kibana untuk memastikan request aplikasi juga masuk ke Elasticsearch.
 
-## 14. Ringkasan Singkat
+## 15. Ringkasan Singkat
 
-Project ini terdiri dari `microcontroller-service` untuk menerima dan menyimpan data sensor ESP32, serta `application-service` untuk mengambil data sensor lewat RabbitMQ dan mengirim email otomatis saat data baru masuk. Database hanya dipakai oleh `microcontroller-service`, sementara observability sudah tersedia lewat Actuator, Prometheus, dan Grafana.
+Project ini terdiri dari `microcontroller-service` untuk menerima dan menyimpan data sensor ESP32, serta `application-service` untuk mengambil data sensor lewat RabbitMQ dan mengirim email otomatis saat data baru masuk.
+
+Database hanya dipakai oleh `microcontroller-service`, sementara observability sudah tersedia lewat Actuator, Prometheus, Grafana, dan ELK stack.
